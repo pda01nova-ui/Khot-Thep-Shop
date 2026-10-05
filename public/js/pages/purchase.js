@@ -1,5 +1,5 @@
 // ---------- หน้าซื้อ (รับสินค้าเข้า) ----------
-const Pur = { lines: [], supId: '', supInvNo: '', date: UI.today(), payType: 'credit', method: 'cash', disc: '', vat: '', note: '', slip: null, editNo: '' };
+const Pur = { lines: [], supId: '', supInvNo: '', date: UI.today(), payType: 'credit', method: 'cash', disc: '', vat: '', note: '', slip: null, editNo: '', requestId: '' };
 
 async function renderPurchase(el) {
   const sups = App.state.suppliers;
@@ -50,9 +50,10 @@ async function renderPurchase(el) {
   $('#p-newsup').onclick = () => editSupplier(null, id => { Pur.supId = id; renderPurchase(el); });
   $('#p-add').onclick = () => {
     const sku = $('#p-prod').value; if (!sku) return;
-    const p = App.state.products.find(x => x.sku === sku);
+    const p = App.state.products.find(x => String(x.sku) === sku);
+    if (!p) { UI.toast('ไม่พบสินค้าที่เลือก กรุณาโหลดหน้าใหม่', true); return; }
     // ไม่รวมรายการ SKU เดียวกัน เพื่อให้ผู้ใช้ใส่ราคาทุนต่างกันเป็นคนละล็อตในบิลซื้อเดียวกันได้
-    Pur.lines.push({ sku, name: p.name, qty: 1, cost: '', disc: 0 });
+    Pur.lines.push({ sku: String(p.sku), name: p.name, qty: 1, cost: '', disc: 0 });
     drawPurLines();
   };
   $('#p-disc').oninput = e => { Pur.disc = e.target.value; drawPurTotal(); };
@@ -64,7 +65,7 @@ async function renderPurchase(el) {
     drawPurPay();
   });
   $('#p-save').onclick = savePurchase;
-  if ($('#p-cancel')) $('#p-cancel').onclick = () => { Object.assign(Pur,{lines:[],supId:'',supInvNo:'',date:UI.today(),payType:'credit',method:'cash',disc:'',vat:'',note:'',slip:null,editNo:''}); renderPurchase(el); };
+  if ($('#p-cancel')) $('#p-cancel').onclick = () => { Object.assign(Pur,{lines:[],supId:'',supInvNo:'',date:UI.today(),payType:'credit',method:'cash',disc:'',vat:'',note:'',slip:null,editNo:'',requestId:''}); renderPurchase(el); };
   $('#pl-from').onchange = $('#pl-to').onchange = loadPurList;
   drawPurLines(); drawPurPay(); loadPurList();
 }
@@ -108,14 +109,15 @@ async function savePurchase() {
   if (!Pur.lines.length) { err.textContent = 'เพิ่มสินค้าอย่างน้อย 1 รายการ'; return; }
   const btn = document.getElementById('p-save'); btn.disabled = true;
   try {
+    if (!Pur.editNo) Pur.requestId = Pur.requestId || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random());
     const payload = {
-      supId: Pur.supId, supInvNo: Pur.supInvNo, date: Pur.date, payType: Pur.payType, method: Pur.method, disc: parseFloat(Pur.disc) || 0,
+      supId: Pur.supId, supInvNo: Pur.supInvNo, date: Pur.date, payType: Pur.payType, method: Pur.method, disc: parseFloat(Pur.disc) || 0, requestId: Pur.requestId,
       vat: parseFloat(Pur.vat) || 0, note: Pur.note, items: Pur.lines.map(l => ({ sku: l.sku, qty: l.qty, unit_cost: l.cost, disc: l.disc }))
     };
     if (Pur.payType === 'cash' && Pur.method === 'transfer' && Pur.slip) payload.slip = await Api.slipFromFile(Pur.slip);
     const editing = Boolean(Pur.editNo);
     const r = await Api.call(editing ? 'updatePurchase' : 'createPurchase', Object.assign(payload, editing ? {purNo:Pur.editNo} : {}));
-    Object.assign(Pur, { lines: [], supInvNo: '', date: UI.today(), disc: '', vat: '', note: '', slip: null, editNo: '' });
+    Object.assign(Pur, { lines: [], supInvNo: '', date: UI.today(), disc: '', vat: '', note: '', slip: null, editNo: '', requestId: '' });
     await App.refresh();
     UI.toast((editing ? 'แก้ไข' : 'บันทึก') + 'การซื้อ ' + r.purNo + ' ยอด ' + UI.money(r.total));
     renderPurchase(document.getElementById('page'));

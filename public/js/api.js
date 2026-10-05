@@ -26,6 +26,17 @@ const Api = (() => {
   async function call(action, payload, allowQueue) {
     if (!window.APPS_SCRIPT_URL || window.APPS_SCRIPT_URL.includes('REPLACE_ME')) throw new Error('ยังไม่ได้ใส่ URL ของ Apps Script ใน js/config.js');
     let res, text;
+    const recoverSaved = async () => {
+      if (!['createSale', 'createPurchase'].includes(action) || !payload?.requestId) return null;
+      try {
+        const check = await fetch(window.APPS_SCRIPT_URL, {
+          method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ action: 'findRequestResult', payload: { requestId: payload.requestId }, token: getToken() })
+        });
+        const data = await check.json();
+        return data.ok && data.data?.action === action ? data.data.result : null;
+      } catch (e) { return null; }
+    };
     UI.busy(true);
     try {
       res = await fetch(window.APPS_SCRIPT_URL, {
@@ -35,13 +46,19 @@ const Api = (() => {
       });
       text = await res.text();
     } catch (e) {
+      const saved = await recoverSaved();
+      if (saved) return saved;
       if (action === 'createSale' && allowQueue !== false && !payload?.adminPin && !payload?.ownerPin) { const count = queueSale(payload); const err = new Error('OFFLINE_QUEUED:' + count); err.code = 'OFFLINE_QUEUED'; throw err; }
-      throw new Error(CONN_MSG);
+      throw new Error(['createSale', 'createPurchase'].includes(action) ? 'ตรวจผลการบันทึกไม่ได้ กรุณาตรวจรายการล่าสุดก่อนกดบันทึกซ้ำ' : CONN_MSG);
     } finally {
       UI.busy(false);
     }
     let json;
-    try { json = JSON.parse(text); } catch (e) { throw new Error(CONN_MSG); }
+    try { json = JSON.parse(text); } catch (e) {
+      const saved = await recoverSaved();
+      if (saved) return saved;
+      throw new Error(['createSale', 'createPurchase'].includes(action) ? 'ตรวจผลการบันทึกไม่ได้ กรุณาตรวจรายการล่าสุดก่อนกดบันทึกซ้ำ' : CONN_MSG);
+    }
     if (!json.ok) {
       const msg = String(json.error || 'เกิดข้อผิดพลาด');
       if (msg.includes('เซสชันหมดอายุ')) { clearSession(); location.hash = '#/login'; }
