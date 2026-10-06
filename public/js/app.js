@@ -67,7 +67,9 @@ function renderShell(hash) {
 }
 
 let booted = false;
+let routeVersion = 0;
 async function route() {
+  const version = ++routeVersion;
   const hash = location.hash || '#/sell';
   const u = App.user();
   if (!u) { renderLogin(); return; }
@@ -79,10 +81,12 @@ async function route() {
   renderShell(target);
   const page = document.getElementById('page');
   try {
-    if (!booted) { page.innerHTML = '<div class="empty">กำลังโหลดข้อมูล...</div>'; await App.refresh(); booted = true; renderShell(target); }
+    if (!booted) { page.innerHTML = '<div class="empty">กำลังโหลดข้อมูล...</div>'; await App.refresh(); if (version !== routeVersion) return; booted = true; renderShell(target); }
+    if (version !== routeVersion) return;
     await ROUTES[target](document.getElementById('page'));
   } catch (e) {
-    document.getElementById('page').innerHTML = `<div class="notice bad">${UI.esc(e.message)}</div><button onclick="booted=false;route()">ลองใหม่</button>`;
+    const currentPage = document.getElementById('page');
+    if (version === routeVersion && currentPage) currentPage.innerHTML = `<div class="notice bad">${UI.esc(e.message)}</div><button onclick="booted=false;route()">ลองใหม่</button>`;
   }
 }
 

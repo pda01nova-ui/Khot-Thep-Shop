@@ -2,6 +2,7 @@
 const Pur = { lines: [], supId: '', supInvNo: '', date: UI.today(), payType: 'credit', method: 'cash', disc: '', vat: '', note: '', slip: null, editNo: '', requestId: '' };
 
 async function renderPurchase(el) {
+  if (!el || !el.isConnected) return;
   const sups = App.state.suppliers;
   el.innerHTML = `
   <div class="page-head"><h2>ซื้อสินค้าเข้า</h2></div>
@@ -50,7 +51,7 @@ async function renderPurchase(el) {
   $('#p-date').onchange = e => Pur.date = e.target.value;
   $('#p-sup').onchange = e => Pur.supId = e.target.value;
   $('#p-inv').oninput = e => Pur.supInvNo = e.target.value;
-  $('#p-newsup').onclick = () => editSupplier(null, id => { Pur.supId = id; renderPurchase(el); });
+  $('#p-newsup').onclick = () => editSupplier(null, id => { Pur.supId = id; if (el.isConnected) renderPurchase(el); });
   const search = $('#p-prod-search'), results = $('#p-prod-results');
   let matches = [], selected = -1;
   const hideResults = () => { results.hidden = true; search.setAttribute('aria-expanded', 'false'); };
@@ -132,6 +133,7 @@ function drawPurPay() {
   const key = Pur.payType === 'credit' ? 'credit' : Pur.method;
   document.querySelectorAll('[data-ppt]').forEach(b => b.classList.toggle('on', b.dataset.ppt === key));
   const box = document.getElementById('p-slipbox');
+  if (!box) return;
   box.innerHTML = key === 'transfer'
     ? `<label for="p-slip">แนบสลิปโอนเงิน</label><input type="file" id="p-slip" accept="image/*,application/pdf">`
     : key === 'cash' ? '<p class="muted">จ่ายจากลิ้นชักของกะที่เปิดอยู่</p>' : '<p class="muted">บันทึกเป็นเจ้าหนี้ ครบกำหนดตามเครดิตของผู้ขาย</p>';
@@ -153,9 +155,10 @@ async function savePurchase() {
     const editing = Boolean(Pur.editNo);
     const r = await Api.call(editing ? 'updatePurchase' : 'createPurchase', Object.assign(payload, editing ? {purNo:Pur.editNo} : {}));
     Object.assign(Pur, { lines: [], supInvNo: '', date: UI.today(), disc: '', vat: '', note: '', slip: null, editNo: '', requestId: '' });
-    await App.refresh();
     UI.toast((editing ? 'แก้ไข' : 'บันทึก') + 'การซื้อ ' + r.purNo + ' ยอด ' + UI.money(r.total));
-    renderPurchase(document.getElementById('page'));
+    const page = document.getElementById('page');
+    if (page) renderPurchase(page);
+    App.refresh().catch(e => console.warn('Purchase saved but refresh failed', e));
   } catch (e) { if (e.code === 'NEED_SHIFT') UI.showError(e); else err.textContent = e.message; }
   btn.disabled = false;
 }

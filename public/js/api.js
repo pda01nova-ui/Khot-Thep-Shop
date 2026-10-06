@@ -36,20 +36,21 @@ const Api = (() => {
     if (!window.APPS_SCRIPT_URL || window.APPS_SCRIPT_URL.includes('REPLACE_ME')) throw new Error('ยังไม่ได้ใส่ URL ของ Apps Script ใน js/config.js');
     const body = JSON.stringify({ action, payload: payload || {}, token: getToken() });
     const recoverSaved = async () => {
-      if (!['createSale', 'createPurchase', 'saveProduct'].includes(action) || !payload?.requestId) return null;
-      try {
+      if (!['createSale', 'createPurchase', 'saveProduct', 'saveCustomer', 'saveSupplier'].includes(action) || !payload?.requestId) return null;
+      for (let i = 0; i < 2; i++) try {
         const check = await fetch(window.APPS_SCRIPT_URL, {
           method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
           body: JSON.stringify({ action: 'findRequestResult', payload: { requestId: payload.requestId }, token: getToken() })
         });
         const data = await check.json();
-        return data.ok && data.data?.action === action ? data.data.result : null;
-      } catch (e) { return null; }
+        if (data.ok && data.data?.action === action) return data.data.result;
+      } catch (e) { /* Retry only the read-only result check. */ }
+      return null;
     };
     let json, failure;
     UI.busy(true);
     try {
-      const attempts = READ_ACTIONS.has(action) ? 2 : 1;
+      const attempts = READ_ACTIONS.has(action) ? 3 : 1;
       for (let i = 0; i < attempts; i++) {
         try {
           const res = await fetch(window.APPS_SCRIPT_URL, {
@@ -57,7 +58,7 @@ const Api = (() => {
           });
           const responseText = await res.text();
           if (!res.ok) {
-            const err = new Error('Apps Script ตอบ HTTP ' + res.status + (res.status === 403 ? ' — ตรวจสิทธิ์ Web App' : res.status === 404 ? ' — ตรวจ URL Deploy' : ''));
+            const err = new Error('Apps Script ตอบ HTTP ' + res.status + (res.status === 403 ? ' — ตรวจสิทธิ์ Web App' : res.status === 404 ? ' — คำขอนี้ไม่สำเร็จ กรุณาลองใหม่' : ''));
             err.code = 'HTTP'; err.status = res.status; throw err;
           }
           try { json = JSON.parse(responseText); }
@@ -70,7 +71,7 @@ const Api = (() => {
         } catch (e) {
           failure = e;
           if (!failure.code) failure.code = 'NETWORK';
-          const retryable = failure.code === 'NETWORK' || failure.code === 'BAD_RESPONSE' || (failure.code === 'HTTP' && failure.status >= 500);
+          const retryable = failure.code === 'NETWORK' || failure.code === 'BAD_RESPONSE' || (failure.code === 'HTTP' && (failure.status === 404 || failure.status >= 500));
           if (i + 1 < attempts && retryable) {
             await new Promise(resolve => setTimeout(resolve, 350));
             continue;
@@ -85,7 +86,7 @@ const Api = (() => {
         if (action === 'createSale' && allowQueue !== false && failure?.code === 'NETWORK' && !payload?.adminPin && !payload?.ownerPin) {
           const count = queueSale(payload); const err = new Error('OFFLINE_QUEUED:' + count); err.code = 'OFFLINE_QUEUED'; throw err;
         }
-        if (['createSale', 'createPurchase', 'saveProduct'].includes(action)) throw new Error('ตรวจผลการบันทึกไม่ได้ กรุณาตรวจรายการล่าสุดก่อนกดบันทึกซ้ำ (' + (failure?.code || 'UNKNOWN') + ')');
+        if (['createSale', 'createPurchase', 'saveProduct', 'saveCustomer', 'saveSupplier'].includes(action)) throw new Error('ตรวจผลการบันทึกไม่ได้ กรุณาตรวจรายการล่าสุดก่อนกดบันทึกซ้ำ (' + (failure?.code || 'UNKNOWN') + ')');
         throw failure || new Error(CONN_MSG);
       }
       if (!json.ok) {

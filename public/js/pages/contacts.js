@@ -37,22 +37,30 @@ function partyValues(r) {
 
 function editCustomer(c, done) {
   c = c || {};
+  const requestId = crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
   UI.modal(c.cust_id ? 'แก้ไขลูกค้า' : 'ลูกค้าใหม่', partyForm(c, true), [
     { label: 'ยกเลิก', cls: 'ghost' },
     { label: 'บันทึก', onClick: async (close, r) => {
-      const x = await Api.call('saveCustomer', Object.assign(partyValues(r), { cust_id: c.cust_id }));
-      close(); await App.refresh(); UI.toast('บันทึกลูกค้าแล้ว'); if (done) done(x.cust_id);
+      const values = partyValues(r);
+      const x = await Api.call('saveCustomer', Object.assign({}, values, { cust_id: c.cust_id, requestId }));
+      close(); App.state.customers = App.state.customers.filter(row => String(row.cust_id) !== String(x.cust_id)).concat({ ...c, ...values, cust_id: x.cust_id });
+      UI.toast('บันทึกลูกค้าแล้ว'); if (done) done(x.cust_id);
+      App.refresh().catch(e => console.warn('Customer saved but refresh failed', e));
     } }
   ]);
 }
 
 function editSupplier(s, done) {
   s = s || {};
+  const requestId = crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
   UI.modal(s.sup_id ? 'แก้ไขผู้ขาย' : 'ผู้ขายใหม่', partyForm(s, false), [
     { label: 'ยกเลิก', cls: 'ghost' },
     { label: 'บันทึก', onClick: async (close, r) => {
-      const x = await Api.call('saveSupplier', Object.assign(partyValues(r), { sup_id: s.sup_id }));
-      close(); await App.refresh(); UI.toast('บันทึกผู้ขายแล้ว'); if (done) done(x.sup_id);
+      const values = partyValues(r);
+      const x = await Api.call('saveSupplier', Object.assign({}, values, { sup_id: s.sup_id, requestId }));
+      close(); App.state.suppliers = App.state.suppliers.filter(row => String(row.sup_id) !== String(x.sup_id)).concat({ ...s, ...values, sup_id: x.sup_id });
+      UI.toast('บันทึกผู้ขายแล้ว'); if (done) done(x.sup_id);
+      App.refresh().catch(e => console.warn('Supplier saved but refresh failed', e));
     } }
   ]);
 }
