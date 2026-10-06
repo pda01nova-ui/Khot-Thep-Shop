@@ -1,6 +1,7 @@
 const Api = (() => {
-  const TOKEN = 'pos_token', USER = 'pos_user';
-  const QUEUE = 'pos_pending_sales';
+  const STORE_KEY = 'pos_' + String(window.SHOP_ID || 'default') + '_';
+  const TOKEN = STORE_KEY + 'token', USER = STORE_KEY + 'user';
+  const QUEUE = STORE_KEY + 'pending_sales';
   const getToken = () => localStorage.getItem(TOKEN) || '';
   const getUser = () => { try { return JSON.parse(localStorage.getItem(USER) || 'null'); } catch (e) { return null; } };
   const setSession = s => {
@@ -9,7 +10,7 @@ const Api = (() => {
   };
   const clearSession = () => { localStorage.removeItem(TOKEN); localStorage.removeItem(USER); };
 
-  const CONN_MSG = 'เชื่อมต่อ Apps Script ไม่ได้ — ตรวจ URL ใน js/config.js และตอน Deploy ต้องตั้ง "ผู้มีสิทธิ์เข้าถึง: ทุกคน"';
+  const CONN_MSG = 'ติดต่อ Apps Script ไม่สำเร็จ กรุณาลองใหม่ และตรวจการเรียกใช้ใน Apps Script หากเกิดบ่อย';
 
   function pending() { try { return JSON.parse(localStorage.getItem(QUEUE) || '[]'); } catch (e) { return []; } }
   function queueSale(payload) { const q = pending(); const id = payload.requestId || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())); payload.requestId = id; if (!q.some(x => x.id === id)) q.push({ id, action: 'createSale', payload, savedAt: new Date().toISOString() }); localStorage.setItem(QUEUE, JSON.stringify(q)); return q.length; }
@@ -23,11 +24,19 @@ const Api = (() => {
       return sent;
     } finally { flushing = false; }
   }
+  const READ_ACTIONS = new Set([
+    'ping', 'bootstrap', 'getSettings', 'listUsers', 'listProducts', 'listProductsAll',
+    'listQuotations', 'getQuotation', 'listCustomers', 'listSuppliers', 'listSales',
+    'getSale', 'findDocument', 'listCreditNotes', 'getCreditNote', 'listPurchases',
+    'getPurchase', 'arAging', 'arPaymentHistory', 'apAging', 'apPaymentHistory',
+    'stockCard', 'stockLots', 'currentShift', 'cashBook', 'listExpenses', 'summary',
+    'stockValue', 'tieOut', 'listArchives'
+  ]);
   async function call(action, payload, allowQueue) {
     if (!window.APPS_SCRIPT_URL || window.APPS_SCRIPT_URL.includes('REPLACE_ME')) throw new Error('ยังไม่ได้ใส่ URL ของ Apps Script ใน js/config.js');
-    let res, text;
+    const body = JSON.stringify({ action, payload: payload || {}, token: getToken() });
     const recoverSaved = async () => {
-      if (!['createSale', 'createPurchase'].includes(action) || !payload?.requestId) return null;
+      if (!['createSale', 'createPurchase', 'saveProduct'].includes(action) || !payload?.requestId) return null;
       try {
         const check = await fetch(window.APPS_SCRIPT_URL, {
           method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
@@ -37,38 +46,59 @@ const Api = (() => {
         return data.ok && data.data?.action === action ? data.data.result : null;
       } catch (e) { return null; }
     };
+    let json, failure;
     UI.busy(true);
     try {
-      res = await fetch(window.APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action, payload: payload || {}, token: getToken() })
-      });
-      text = await res.text();
-    } catch (e) {
-      const saved = await recoverSaved();
-      if (saved) return saved;
-      if (action === 'createSale' && allowQueue !== false && !payload?.adminPin && !payload?.ownerPin) { const count = queueSale(payload); const err = new Error('OFFLINE_QUEUED:' + count); err.code = 'OFFLINE_QUEUED'; throw err; }
-      throw new Error(['createSale', 'createPurchase'].includes(action) ? 'ตรวจผลการบันทึกไม่ได้ กรุณาตรวจรายการล่าสุดก่อนกดบันทึกซ้ำ' : CONN_MSG);
-    } finally {
-      UI.busy(false);
-    }
-    let json;
-    try { json = JSON.parse(text); } catch (e) {
-      const saved = await recoverSaved();
-      if (saved) return saved;
-      throw new Error(['createSale', 'createPurchase'].includes(action) ? 'ตรวจผลการบันทึกไม่ได้ กรุณาตรวจรายการล่าสุดก่อนกดบันทึกซ้ำ' : CONN_MSG);
-    }
-    if (!json.ok) {
-      const msg = String(json.error || 'เกิดข้อผิดพลาด');
-      if (msg.includes('เซสชันหมดอายุ')) { clearSession(); location.hash = '#/login'; }
-      if (msg.startsWith('MUST_CHANGE_PIN:')) { const u = getUser(); if (u) { u.mustChangePin = true; localStorage.setItem(USER, JSON.stringify(u)); location.hash = '#/change-pin'; } }
-      const err = new Error(msg.replace(/^(NEED_ADMIN|NEED_SHIFT):/, ''));
-      if (msg.startsWith('NEED_ADMIN:')) err.code = 'NEED_ADMIN';
-      if (msg.startsWith('NEED_SHIFT:')) err.code = 'NEED_SHIFT';
-      throw err;
-    }
-    return json.data;
+      const attempts = READ_ACTIONS.has(action) ? 2 : 1;
+      for (let i = 0; i < attempts; i++) {
+        try {
+          const res = await fetch(window.APPS_SCRIPT_URL, {
+            method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body
+          });
+          const responseText = await res.text();
+          if (!res.ok) {
+            const err = new Error('Apps Script ตอบ HTTP ' + res.status + (res.status === 403 ? ' — ตรวจสิทธิ์ Web App' : res.status === 404 ? ' — ตรวจ URL Deploy' : ''));
+            err.code = 'HTTP'; err.status = res.status; throw err;
+          }
+          try { json = JSON.parse(responseText); }
+          catch (e) {
+            const html = /^\s*</.test(responseText);
+            const err = new Error(html ? 'Apps Script ส่งหน้า HTML กลับมาแทนข้อมูล — ตรวจ URL /exec และสิทธิ์ Web App' : 'Apps Script ส่งข้อมูลตอบกลับไม่ถูกต้อง');
+            err.code = html ? 'HTML_RESPONSE' : 'BAD_RESPONSE'; throw err;
+          }
+          break;
+        } catch (e) {
+          failure = e;
+          if (!failure.code) failure.code = 'NETWORK';
+          const retryable = failure.code === 'NETWORK' || failure.code === 'BAD_RESPONSE' || (failure.code === 'HTTP' && failure.status >= 500);
+          if (i + 1 < attempts && retryable) {
+            await new Promise(resolve => setTimeout(resolve, 350));
+            continue;
+          }
+          break;
+        }
+      }
+      if (!json) {
+        console.warn('POS API response failed', { action, code: failure?.code, status: failure?.status });
+        const saved = await recoverSaved();
+        if (saved) return saved;
+        if (action === 'createSale' && allowQueue !== false && failure?.code === 'NETWORK' && !payload?.adminPin && !payload?.ownerPin) {
+          const count = queueSale(payload); const err = new Error('OFFLINE_QUEUED:' + count); err.code = 'OFFLINE_QUEUED'; throw err;
+        }
+        if (['createSale', 'createPurchase', 'saveProduct'].includes(action)) throw new Error('ตรวจผลการบันทึกไม่ได้ กรุณาตรวจรายการล่าสุดก่อนกดบันทึกซ้ำ (' + (failure?.code || 'UNKNOWN') + ')');
+        throw failure || new Error(CONN_MSG);
+      }
+      if (!json.ok) {
+        const msg = String(json.error || 'เกิดข้อผิดพลาด');
+        if (msg.includes('เซสชันหมดอายุ')) { clearSession(); location.hash = '#/login'; }
+        if (msg.startsWith('MUST_CHANGE_PIN:')) { const u = getUser(); if (u) { u.mustChangePin = true; localStorage.setItem(USER, JSON.stringify(u)); location.hash = '#/change-pin'; } }
+        const err = new Error(msg.replace(/^(NEED_ADMIN|NEED_SHIFT):/, ''));
+        if (msg.startsWith('NEED_ADMIN:')) err.code = 'NEED_ADMIN';
+        if (msg.startsWith('NEED_SHIFT:')) err.code = 'NEED_SHIFT';
+        throw err;
+      }
+      return json.data;
+    } finally { UI.busy(false); }
   }
 
   // ย่อรูปสลิปก่อนส่ง (ด้านยาวไม่เกิน 1400px) ให้อัปโหลดเร็ว

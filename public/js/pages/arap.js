@@ -9,12 +9,15 @@ async function renderArAp(el) {
     ${App.isAdmin() ? '<section class="panel"><h3>เจ้าหนี้ค้างชำระ (ซื้อเชื่อ)</h3><div id="ap"><div class="empty">กำลังโหลด...</div></div></section><section class="panel"><div class="page-head"><h3>ประวัติจ่ายชำระเจ้าหนี้</h3><div class="row" style="max-width:330px"><input id="aph-from" type="date" value="'+since+'"><input id="aph-to" type="date" value="'+until+'"></div></div><div id="ap-history"><div class="empty">กำลังโหลด...</div></div></section>' : ''}`;
   try {
     el.querySelectorAll('[data-new-credit-note]').forEach(b => b.onclick = () => openCreditNoteSearch(el));
+    const [notes, ar, ap] = await Promise.all([
+      App.isAdmin() ? Api.call('listCreditNotes', {from:'2000-01-01',to:'2999-12-31'}) : Promise.resolve([]),
+      Api.call('arAging'),
+      App.isAdmin() ? Api.call('apAging') : Promise.resolve([])
+    ]);
     if (App.isAdmin()) {
-      const notes=await Api.call('listCreditNotes',{from:'2000-01-01',to:'2999-12-31'});
       el.querySelector('#credit-history').innerHTML=notes.length ? `<div class="table-wrap"><table><thead><tr><th>วันที่</th><th>เอกสาร</th><th>อ้างอิง</th><th>ประเภท</th><th class="r">ยอด</th><th></th></tr></thead><tbody>${notes.slice(0,100).map(n=>{const no=n.doc_type==='CUSTOMER'?n.cn_no:n.scn_no;return `<tr><td>${UI.esc(n.date)}</td><td>${UI.esc(no)}</td><td>${UI.esc(n.doc_type==='CUSTOMER'?n.sale_no:n.pur_no)}</td><td>${n.doc_type==='CUSTOMER'?'ลูกค้า':'ผู้ขาย'} · ${UI.esc(n.type)}</td><td class="r num">${UI.money(n.amount)}</td><td><button class="ghost sm" data-view-cn="${UI.esc(no)}">ดูรายละเอียด</button></td></tr>`;}).join('')}</tbody></table></div>` : '<div class="empty">ยังไม่มีใบลดหนี้หรือคืนสินค้า</div>';
       el.querySelectorAll('[data-view-cn]').forEach(b=>b.onclick=()=>previewCreditNote(b.dataset.viewCn));
     }
-    const ar = await Api.call('arAging');
     const tot = ar.reduce((a, r) => a + r.balance, 0);
     el.querySelector('#ar').innerHTML = ar.length ? `<p>ยอดค้างรวม <b class="num">${UI.money(tot)}</b></p><div class="table-wrap"><table>
       <thead><tr><th>บิล</th><th>ลูกค้า</th><th>ครบกำหนด</th><th class="r">ยอดบิล</th><th class="r">ค้าง</th><th></th></tr></thead><tbody>
@@ -33,7 +36,6 @@ async function renderArAp(el) {
     el.querySelector('#arh-from').onchange=el.querySelector('#arh-to').onchange=()=>loadArHistory().catch(e=>UI.toast(e.message,true));
     loadArHistory().catch(e=>UI.toast(e.message,true));
     if (App.isAdmin()) {
-      const ap = await Api.call('apAging');
       const tp = ap.reduce((a, r) => a + r.balance, 0);
       el.querySelector('#ap').innerHTML = ap.length ? `<p>ยอดค้างรวม <b class="num">${UI.money(tp)}</b></p><div class="table-wrap"><table>
         <thead><tr><th>บิลซื้อ</th><th>ผู้ขาย</th><th>ครบกำหนด</th><th class="r">ยอดบิล</th><th class="r">ค้าง</th><th></th></tr></thead><tbody>

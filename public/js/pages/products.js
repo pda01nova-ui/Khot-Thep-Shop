@@ -44,6 +44,7 @@ function drawProducts() {
 
 function editProduct(p) {
   const isNew = !p; p = p || {};
+  const requestId = crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + '-' + Math.random();
   UI.modal(isNew ? 'เพิ่มสินค้า' : 'แก้ไขสินค้า', `
     <div class="row"><div><label>รหัสสินค้า</label><input id="f-sku" value="${UI.esc(p.sku || '')}" ${isNew ? 'placeholder="ว่างไว้ให้ระบบตั้ง"' : 'disabled'}></div>
       <div><label>บาร์โค้ด</label><input id="f-bc" value="${UI.esc(p.barcode || '')}"></div></div>
@@ -59,9 +60,17 @@ function editProduct(p) {
       const v = id => (r.querySelector(id) || {}).value;
       if (!v('#f-name').trim()) throw new Error('กรอกชื่อสินค้า');
       if (v('#f-price') === '' || isNaN(parseFloat(v('#f-price')))) throw new Error('กรอกราคาขาย');
-      await Api.call('saveProduct', { sku: isNew ? v('#f-sku').trim() : p.sku, barcode: v('#f-bc').trim(), name: v('#f-name').trim(), category: v('#f-cat').trim(),
-        unit: v('#f-unit').trim(), location: v('#f-location').trim(), sell_price: parseFloat(v('#f-price')), min_qty: parseFloat(v('#f-min')) || 0 });
-      close(); allProducts = await Api.call('listProductsAll'); await App.refresh(); drawProducts(); UI.toast('บันทึกสินค้าแล้ว');
+      const input = { sku: isNew ? v('#f-sku').trim() : p.sku, barcode: v('#f-bc').trim(), name: v('#f-name').trim(), category: v('#f-cat').trim(),
+        unit: v('#f-unit').trim(), location: v('#f-location').trim(), sell_price: parseFloat(v('#f-price')), min_qty: parseFloat(v('#f-min')) || 0,
+        requestId };
+      const saved = await Api.call('saveProduct', input);
+      close();
+      const row = { ...p, ...input, sku: saved.sku, qty_on_hand: p.qty_on_hand || 0, active: p.active === undefined ? true : p.active };
+      delete row.requestId;
+      allProducts = allProducts.filter(x => String(x.sku) !== String(saved.sku)).concat(row);
+      drawProducts(); UI.toast('บันทึกสินค้าแล้ว');
+      try { allProducts = await Api.call('listProductsAll'); drawProducts(); await App.refresh(); }
+      catch (e) { console.warn('Product saved but refresh failed', e); UI.toast('บันทึกสินค้าแล้ว แต่โหลดข้อมูลล่าสุดไม่สำเร็จ กดรีเฟรชภายหลัง', true); }
     } }
   ]);
 }

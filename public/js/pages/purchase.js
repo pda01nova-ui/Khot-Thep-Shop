@@ -13,9 +13,12 @@ async function renderPurchase(el) {
         <div><label for="p-inv">เลขที่ใบกำกับ/บิลผู้ขาย</label><input id="p-inv" value="${UI.esc(Pur.supInvNo)}"></div>
       </div>
       <button class="ghost sm" id="p-newsup" style="margin-top:6px">+ ผู้ขายใหม่</button>
-      <label for="p-prod">เพิ่มสินค้า</label>
-      <div class="row">
-        <select id="p-prod" style="flex:3 1 200px"><option value="">— เลือกสินค้า —</option>${App.state.products.map(p => `<option value="${UI.esc(p.sku)}">${UI.esc(p.name)} (คงเหลือ ${p.qty_on_hand})</option>`).join('')}</select>
+      <label for="p-prod-search">เพิ่มสินค้า</label>
+      <div class="row" style="align-items:flex-start">
+        <div class="product-picker" style="flex:3 1 200px">
+          <input id="p-prod-search" type="search" autocomplete="off" placeholder="ค้นหาชื่อ / รหัส / บาร์โค้ด / หมวด / ตำแหน่ง หรือสแกนแล้วกด Enter" aria-controls="p-prod-results" aria-expanded="false">
+          <div id="p-prod-results" class="product-picker-results" role="listbox" hidden></div>
+        </div>
         <button class="ghost" id="p-add" style="flex:0 0 auto">เพิ่ม</button>
       </div>
       <div class="table-wrap" style="margin-top:10px"><table>
@@ -48,13 +51,45 @@ async function renderPurchase(el) {
   $('#p-sup').onchange = e => Pur.supId = e.target.value;
   $('#p-inv').oninput = e => Pur.supInvNo = e.target.value;
   $('#p-newsup').onclick = () => editSupplier(null, id => { Pur.supId = id; renderPurchase(el); });
-  $('#p-add').onclick = () => {
-    const sku = $('#p-prod').value; if (!sku) return;
-    const p = App.state.products.find(x => String(x.sku) === sku);
-    if (!p) { UI.toast('ไม่พบสินค้าที่เลือก กรุณาโหลดหน้าใหม่', true); return; }
+  const search = $('#p-prod-search'), results = $('#p-prod-results');
+  let matches = [], selected = -1;
+  const hideResults = () => { results.hidden = true; search.setAttribute('aria-expanded', 'false'); };
+  const findProducts = () => {
+    const terms = search.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+    if (!terms.length) return [];
+    return App.state.products.filter(p => {
+      const haystack = [p.name, p.sku, p.barcode, p.category, p.location].map(v => String(v || '').toLocaleLowerCase()).join(' ');
+      return terms.every(term => haystack.includes(term));
+    }).slice(0, 20);
+  };
+  const addProduct = p => {
+    if (!p) { UI.toast('ไม่พบสินค้าที่ค้นหา', true); return; }
     // ไม่รวมรายการ SKU เดียวกัน เพื่อให้ผู้ใช้ใส่ราคาทุนต่างกันเป็นคนละล็อตในบิลซื้อเดียวกันได้
     Pur.lines.push({ sku: String(p.sku), name: p.name, qty: 1, cost: '', disc: 0 });
     drawPurLines();
+    search.value = ''; hideResults(); search.focus();
+  };
+  const showResults = () => {
+    matches = findProducts(); selected = -1;
+    results.innerHTML = matches.length ? matches.map((p, i) => `<button type="button" class="product-picker-option" role="option" data-product-index="${i}"><strong>${UI.esc(p.name)}</strong><small>${UI.esc(p.sku)} · ${UI.esc(p.barcode || '')} · คงเหลือ ${UI.esc(p.qty_on_hand)}</small></button>`).join('') : '<div class="product-picker-empty">ไม่พบสินค้า</div>';
+    results.hidden = !search.value.trim(); search.setAttribute('aria-expanded', String(!results.hidden));
+    results.querySelectorAll('[data-product-index]').forEach(b => b.onclick = () => addProduct(matches[Number(b.dataset.productIndex)]));
+  };
+  search.oninput = showResults;
+  search.onkeydown = e => {
+    if (e.key === 'Escape') { hideResults(); return; }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!matches.length) return;
+      e.preventDefault(); selected = (selected + (e.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length;
+      results.querySelectorAll('[data-product-index]').forEach((b, i) => b.classList.toggle('on', i === selected));
+      return;
+    }
+    if (e.key === 'Enter') { e.preventDefault(); $('#p-add').click(); }
+  };
+  $('#p-add').onclick = () => {
+    if (!search.value.trim()) { search.focus(); showResults(); return; }
+    const exact = App.state.products.find(p => [p.sku, p.barcode].some(v => String(v || '').trim().toLocaleLowerCase() === search.value.trim().toLocaleLowerCase()));
+    addProduct(exact || (selected >= 0 ? matches[selected] : matches.length === 1 ? matches[0] : null));
   };
   $('#p-disc').oninput = e => { Pur.disc = e.target.value; drawPurTotal(); };
   $('#p-vat').oninput = e => { Pur.vat = e.target.value; drawPurTotal(); };
